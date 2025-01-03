@@ -4,61 +4,61 @@ from torch.nn import functional as F
 import math
 
 
-class SelfAttention(nn.Module):
+class MultiHeadSelfAttention(nn.Module):
     def __init__(
         self,
-        n_heads: int,
-        d_embed: int,
-        in_proj_bias: bool = True,
-        out_proj_bias: bool = True,
+        num_heads: int,
+        embed_dim: int,
+        input_proj_bias: bool = True,
+        output_proj_bias: bool = True,
     ):
         """
-        Initialize the SelfAttention module.
+        Initialize the MultiHeadMultiHeadSelfAttention module.
 
         Args:
-            n_heads (int): The number of attention heads.
-            d_embed (int): The dimension of the input and output embeddings.
-            in_proj_bias (bool, optional): Whether to include bias in the input projection layer. Defaults to True.
-            out_proj_bias (bool, optional): Whether to include bias in the output projection layer. Defaults to True.
+            num_heads (int): The number of attention heads.
+            embed_dim (int): The dimension of the input and output embeddings.
+            input_proj_bias (bool, optional): Whether to include bias in the input projection layer. Defaults to True.
+            output_proj_bias (bool, optional): Whether to include bias in the output projection layer. Defaults to True.
 
         Attributes:
-            in_proj (nn.Linear): The linear layer that combines the Wq, Wk, and Wv matrices into one matrix.
-            out_proj (nn.Linear): The linear layer that represents the Wo matrix.
-            n_heads (int): The number of attention heads.
-            d_head (int): The dimension of each attention head.
+            input_proj (nn.Linear): The linear layer that combines the Wq, Wk, and Wv matrices into one matrix.
+            output_proj (nn.Linear): The linear layer that represents the Wo matrix.
+            num_heads (int): The number of attention heads.
+            head_dim (int): The dimension of each attention head.
         """
         super().__init__()
         # This combines the Wq, Wk and Wv matrices into one matrix
-        self.in_proj = nn.Linear(d_embed, 3 * d_embed, bias=in_proj_bias)
+        self.input_proj = nn.Linear(embed_dim, 3 * embed_dim, bias=input_proj_bias)
         # This one represents the Wo matrix
-        self.out_proj = nn.Linear(d_embed, d_embed, bias=out_proj_bias)
-        self.n_heads = n_heads
-        self.d_head = d_embed // n_heads
+        self.output_proj = nn.Linear(embed_dim, embed_dim, bias=output_proj_bias)
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
 
-    def forward(self, x, causal_mask=False):
+    def forward(self, inputs, apply_causal_mask=False):
         """
         Perform the forward pass of the self-attention mechanism.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (Batch_Size, Seq_Len, Dim).
-            causal_mask (bool, optional): If True, applies a causal mask to prevent attending to future positions. Defaults to False.
+            inputs (torch.Tensor): Input tensor of shape (Batch_Size, Seq_Len, Dim).
+            apply_causal_mask (bool, optional): If True, applies a causal mask to prevent attending to future positions. Defaults to False.
 
         Returns:
             torch.Tensor: Output tensor of shape (Batch_Size, Seq_Len, Dim) after applying self-attention.
         """
-        # x: # (Batch_Size, Seq_Len, Dim)
+        # inputs: (Batch_Size, Seq_Len, Dim)
 
         # (Batch_Size, Seq_Len, Dim)
-        input_shape = x.shape
+        input_shape = inputs.shape
 
         # (Batch_Size, Seq_Len, Dim)
-        batch_size, sequence_length, d_embed = input_shape
+        batch_size, sequence_length, embed_dim = input_shape
 
         # (Batch_Size, Seq_Len, H, Dim / H)
-        interim_shape = (batch_size, sequence_length, self.n_heads, self.d_head)
+        interim_shape = (batch_size, sequence_length, self.num_heads, self.head_dim)
 
         # (Batch_Size, Seq_Len, Dim) -> (Batch_Size, Seq_Len, Dim * 3) -> 3 tensor of shape (Batch_Size, Seq_Len, Dim)
-        q, k, v = self.in_proj(x).chunk(3, dim=-1)
+        q, k, v = self.input_proj(inputs).chunk(3, dim=-1)
 
         # (Batch_Size, Seq_Len, Dim) -> (Batch_Size, Seq_Len, H, Dim / H) -> (Batch_Size, H, Seq_Len, Dim / H)
         q = q.view(interim_shape).transpose(1, 2)
@@ -68,7 +68,7 @@ class SelfAttention(nn.Module):
         # (Batch_Size, H, Seq_Len, Dim / H) @ (Batch_Size, H, Dim / H, Seq_Len) -> (Batch_Size, H, Seq_Len, Seq_Len)
         weight = q @ k.transpose(-1, -2)
 
-        if causal_mask:
+        if apply_causal_mask:
             # Mask where the upper triangle (above the principal diagonal) is 1
             mask = torch.ones_like(weight, dtype=torch.bool).triu(1)
             # Fill the upper triangle with -inf
@@ -76,7 +76,7 @@ class SelfAttention(nn.Module):
 
         # Divide by d_k (Dim / H).
         # (Batch_Size, H, Seq_Len, Seq_Len) -> (Batch_Size, H, Seq_Len, Seq_Len)
-        weight /= math.sqrt(self.d_head)
+        weight /= math.sqrt(self.head_dim)
 
         # (Batch_Size, H, Seq_Len, Seq_Len) -> (Batch_Size, H, Seq_Len, Seq_Len)
         weight = F.softmax(weight, dim=-1)
@@ -91,65 +91,92 @@ class SelfAttention(nn.Module):
         output = output.reshape(input_shape)
 
         # (Batch_Size, Seq_Len, Dim) -> (Batch_Size, Seq_Len, Dim)
-        output = self.out_proj(output)
+        output = self.output_proj(output)
 
         # (Batch_Size, Seq_Len, Dim)
         return output
 
 
-class CrossAttention(nn.Module):
-    def __init__(self, n_heads, d_embed, d_cross, in_proj_bias=True, out_proj_bias=True):
-        super().__init__()
-        self.q_proj   = nn.Linear(d_embed, d_embed, bias=in_proj_bias)
-        self.k_proj   = nn.Linear(d_cross, d_embed, bias=in_proj_bias)
-        self.v_proj   = nn.Linear(d_cross, d_embed, bias=in_proj_bias)
-        self.out_proj = nn.Linear(d_embed, d_embed, bias=out_proj_bias)
-        self.n_heads = n_heads
-        self.d_head = d_embed // n_heads
-    
-    def forward(self, x, y):
-        # x (latent): # (Batch_Size, Seq_Len_Q, Dim_Q)
-        # y (context): # (Batch_Size, Seq_Len_KV, Dim_KV) = (Batch_Size, 77, 768)
+class MultiHeadCrossAttention(nn.Module):
+    def __init__(
+        self,
+        num_heads,
+        embed_dim,
+        cross_dim,
+        input_proj_bias=True,
+        output_proj_bias=True,
+    ):
+        """
+        Initialize the MultiHeadMultiHeadCrossAttention module.
 
-        input_shape = x.shape
-        batch_size, sequence_length, d_embed = input_shape
-        # Divide each embedding of Q into multiple heads such that d_heads * n_heads = Dim_Q
-        interim_shape = (batch_size, -1, self.n_heads, self.d_head)
-        
+        Args:
+            num_heads (int): The number of attention heads.
+            embed_dim (int): The dimension of the input and output embeddings for the query.
+            cross_dim (int): The dimension of the input embeddings for the key and value.
+            input_proj_bias (bool, optional): Whether to include bias in the input projection layers. Defaults to True.
+            output_proj_bias (bool, optional): Whether to include bias in the output projection layer. Defaults to True.
+
+        Attributes:
+        We can define separately q, k, v instead of one matrix like in self-attention.
+
+            query_proj (nn.Linear): The linear layer for projecting the query.
+            key_proj (nn.Linear): The linear layer for projecting the key.
+            value_proj (nn.Linear): The linear layer for projecting the value.
+            output_proj (nn.Linear): The linear layer for projecting the output.
+            num_heads (int): The number of attention heads.
+            head_dim (int): The dimension of each attention head.
+        """
+        super().__init__()
+        self.query_proj = nn.Linear(embed_dim, embed_dim, bias=input_proj_bias)
+        self.key_proj = nn.Linear(cross_dim, embed_dim, bias=input_proj_bias)
+        self.value_proj = nn.Linear(cross_dim, embed_dim, bias=input_proj_bias)
+        self.output_proj = nn.Linear(embed_dim, embed_dim, bias=output_proj_bias)
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
+    def forward(self, query, context):
+        # query (latent): # (Batch_Size, Seq_Len_Q, Dim_Q) - queries
+        # context (context): # (Batch_Size, Seq_Len_KV, Dim_KV) = (Batch_Size, 77, 768) - keys and values - context == prompt
+
+        input_shape = query.shape
+        batch_size, seq_length_q, embed_dim = input_shape
+        # Divide each embedding of Q into multiple heads such that head_dim * num_heads = Dim_Q
+        interim_shape = (batch_size, -1, self.num_heads, self.head_dim)
+
         # (Batch_Size, Seq_Len_Q, Dim_Q) -> (Batch_Size, Seq_Len_Q, Dim_Q)
-        q = self.q_proj(x)
+        q = self.query_proj(query)
         # (Batch_Size, Seq_Len_KV, Dim_KV) -> (Batch_Size, Seq_Len_KV, Dim_Q)
-        k = self.k_proj(y)
+        k = self.key_proj(context)
         # (Batch_Size, Seq_Len_KV, Dim_KV) -> (Batch_Size, Seq_Len_KV, Dim_Q)
-        v = self.v_proj(y)
+        v = self.value_proj(context)
 
         # (Batch_Size, Seq_Len_Q, Dim_Q) -> (Batch_Size, Seq_Len_Q, H, Dim_Q / H) -> (Batch_Size, H, Seq_Len_Q, Dim_Q / H)
-        q = q.view(interim_shape).transpose(1, 2) 
+        q = q.view(interim_shape).transpose(1, 2)
         # (Batch_Size, Seq_Len_KV, Dim_Q) -> (Batch_Size, Seq_Len_KV, H, Dim_Q / H) -> (Batch_Size, H, Seq_Len_KV, Dim_Q / H)
-        k = k.view(interim_shape).transpose(1, 2) 
+        k = k.view(interim_shape).transpose(1, 2)
         # (Batch_Size, Seq_Len_KV, Dim_Q) -> (Batch_Size, Seq_Len_KV, H, Dim_Q / H) -> (Batch_Size, H, Seq_Len_KV, Dim_Q / H)
-        v = v.view(interim_shape).transpose(1, 2) 
-        
+        v = v.view(interim_shape).transpose(1, 2)
+
         # (Batch_Size, H, Seq_Len_Q, Dim_Q / H) @ (Batch_Size, H, Dim_Q / H, Seq_Len_KV) -> (Batch_Size, H, Seq_Len_Q, Seq_Len_KV)
         weight = q @ k.transpose(-1, -2)
-        
+
         # (Batch_Size, H, Seq_Len_Q, Seq_Len_KV)
-        weight /= math.sqrt(self.d_head)
-        
+        weight /= math.sqrt(self.head_dim)
+
         # (Batch_Size, H, Seq_Len_Q, Seq_Len_KV)
         weight = F.softmax(weight, dim=-1)
-        
+
         # (Batch_Size, H, Seq_Len_Q, Seq_Len_KV) @ (Batch_Size, H, Seq_Len_KV, Dim_Q / H) -> (Batch_Size, H, Seq_Len_Q, Dim_Q / H)
         output = weight @ v
-        
+
         # (Batch_Size, H, Seq_Len_Q, Dim_Q / H) -> (Batch_Size, Seq_Len_Q, H, Dim_Q / H)
         output = output.transpose(1, 2).contiguous()
-        
+
         # (Batch_Size, Seq_Len_Q, H, Dim_Q / H) -> (Batch_Size, Seq_Len_Q, Dim_Q)
         output = output.view(input_shape)
-        
+
         # (Batch_Size, Seq_Len_Q, Dim_Q) -> (Batch_Size, Seq_Len_Q, Dim_Q)
-        output = self.out_proj(output)
+        output = self.output_proj(output)
 
         # (Batch_Size, Seq_Len_Q, Dim_Q)
         return output

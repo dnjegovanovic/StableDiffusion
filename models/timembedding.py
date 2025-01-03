@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import math
 
+
 class TimeEmbedding(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
@@ -14,10 +15,10 @@ class TimeEmbedding(nn.Module):
 
         # (1, 320) -> (1, 1280)
         x = self.linear_1(x)
-        
+
         # (1, 1280) -> (1, 1280)
-        x = F.silu(x) 
-        
+        x = F.silu(x)
+
         # (1, 1280) -> (1, 1280)
         x = self.linear_2(x)
 

@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from attention import SelfAttention
+from attention import MultiHeadSelfAttention
 
 
 class VAEAttentionBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.groupnorm = nn.GroupNorm(32, channels)
-        self.attention = SelfAttention(1, channels)
+        self.attention = MultiHeadSelfAttention(1, channels)
 
     def forward(self, x):
         # x: (Batch_Size, Features, Height, Width)

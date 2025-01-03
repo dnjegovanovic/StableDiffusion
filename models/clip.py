@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from attention import SelfAttention
+from attention import MultiHeadSelfAttention
 
 
 class CLIPEmbedding(nn.Module):
@@ -28,7 +28,7 @@ class CLIPLayer(nn.Module):
         # Pre-attention norm
         self.layernorm_1 = nn.LayerNorm(n_embd)
         # Self attention
-        self.attention = SelfAttention(n_head, n_embd)
+        self.attention = MultiHeadSelfAttention(n_head, n_embd)
         # Pre-FNN norm
         self.layernorm_2 = nn.LayerNorm(n_embd)
         # Feedforward layer
