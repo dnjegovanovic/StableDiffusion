@@ -4,7 +4,7 @@ from torch.nn import functional as F
 import math
 
 from models.timembedding import TimeEmbedding
-from unet import UNet, UNetOutputLayer
+from models.unet import UNet, UNetOutputLayer
 
 
 class Diffusion(nn.Module):
@@ -23,12 +23,10 @@ class Diffusion(nn.Module):
 
         # (1, 320) -> (1, 1280)
         timestep_embedding = self.temporal_embedding(timestep)
-
         # (Batch, 4, Height / 8, Width / 8) -> (Batch, 320, Height / 8, Width / 8)
         denoised_output = self.denoising_unet(
             latent_representation, conditioning_context, timestep_embedding
         )
-
         # (Batch, 320, Height / 8, Width / 8) -> (Batch, 4, Height / 8, Width / 8)
         final_output = self.output_layer(denoised_output)
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import math
-from attention import MultiHeadSelfAttention, MultiHeadCrossAttention
+from models.attention import MultiHeadSelfAttention, MultiHeadCrossAttention
 
 
 class ConditionalSequential(nn.Sequential):
@@ -56,7 +56,7 @@ class UNetOutputLayer(nn.Module):
         self.groupnorm = nn.GroupNorm(32, in_channels)
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
 
-    def forward(self, x):
+    def forward(self, x) -> torch.Tensor:
         # x: (Batch_Size, 320, Height / 8, Width / 8)
 
         # (Batch_Size, 320, Height / 8, Width / 8) -> (Batch_Size, 320, Height / 8, Width / 8)
@@ -127,6 +127,12 @@ class UNetResidualBlock(nn.Module):
 
         # (Batch_Size, Output_Channels, Height, Width) -> (Batch_Size, Output_Channels, Height, Width)
         merged_output = F.silu(merged_output)
+        
+        # (Batch_Size, Out_Channels, Height, Width) -> (Batch_Size, Out_Channels, Height, Width)
+        merged_output = self.merged_conv(merged_output)
+        
+        # (Batch_Size, Out_Channels, Height, Width) + (Batch_Size, Out_Channels, Height, Width) -> (Batch_Size, Out_Channels, Height, Width)
+        return merged_output + self.residual_connection(residual)
 
 
 class UNetAttentionBlock(nn.Module):
@@ -146,12 +152,12 @@ class UNetAttentionBlock(nn.Module):
 
         self.self_attn_norm = nn.LayerNorm(total_channels)
         self.self_attention = MultiHeadSelfAttention(
-            num_heads, total_channels, in_proj_bias=False
+            num_heads, total_channels, input_proj_bias=False
         )
 
         self.cross_attn_norm = nn.LayerNorm(total_channels)
         self.cross_attention = MultiHeadCrossAttention(
-            num_heads, total_channels, context_dim, in_proj_bias=False
+            num_heads, total_channels, context_dim, input_proj_bias=False
         )
 
         self.ffn_norm = nn.LayerNorm(total_channels)
@@ -233,11 +239,11 @@ class UNetAttentionBlock(nn.Module):
         # GeGLU as implemented in the original code:
         # https://github.com/CompVis/stable-diffusion/blob/21f890f9da3cfbeaba8e2ac3c425ee9e998d5229/ldm/modules/attention.py#L37C10-L37C10
         # (Batch_Size, Height * Width, Channels) -> two tensors of shape (Batch_Size, Height * Width, Channels * 4)
-        geglu_output, geglu_gate = self.geglu_linear_1(feature_map).chunk(2, dim=-1)
+        feature_map, geglu_gate = self.geglu_linear_1(feature_map).chunk(2, dim=-1)
 
         # Element-wise product:
         # (Batch_Size, Height * Width, Channels * 4) * (Batch_Size, Height * Width, Channels * 4) -> (Batch_Size, Height * Width, Channels * 4)
-        feature_map = geglu_output * F.gelu(geglu_gate)
+        feature_map = feature_map * F.gelu(geglu_gate)
 
         # (Batch_Size, Height * Width, Channels * 4) -> (Batch_Size, Height * Width, Channels)
         feature_map = self.geglu_linear_2(feature_map)
@@ -378,7 +384,6 @@ class UNet(nn.Module):
             skip_connections.append(x)
 
         x = self.bottleneck(x, context, time)
-
         for layers in self.decoders:
             # Since we always concat with the skip connection of the encoder, the number of features increases before being sent to the decoder's layer
             x = torch.cat((x, skip_connections.pop()), dim=1)

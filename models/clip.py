@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from attention import MultiHeadSelfAttention
+from models.attention import MultiHeadSelfAttention
 
 
 class CLIPEmbedding(nn.Module):
@@ -45,7 +45,7 @@ class CLIPLayer(nn.Module):
         x = self.layernorm_1(x)
 
         # (Batch_Size, Seq_Len, Dim) -> (Batch_Size, Seq_Len, Dim)
-        x = self.attention(x, causal_mask=True)
+        x = self.attention(x, apply_causal_mask=True)
 
         # (Batch_Size, Seq_Len, Dim) + (Batch_Size, Seq_Len, Dim) -> (Batch_Size, Seq_Len, Dim)
         x += residue

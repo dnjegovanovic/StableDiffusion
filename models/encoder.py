@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from decoder import VAEAttentionBlock, VAEResidualBlock
+from models.decoder import VAEAttentionBlock, VAEResidualBlock
 
 
-class VAE_encoder(nn.Sequential):
+class VAEncoder(nn.Sequential):
     """
     This class represents the VAE encoder model. It is a sequential model that processes an input image
     through multiple convolutional layers, residual blocks, attention blocks, and normalization layers.

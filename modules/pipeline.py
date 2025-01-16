@@ -216,12 +216,11 @@ class Pipeline:
             diffusion.to(self.device)
 
             # Iteratively denoise the latents
-            timesteps = tqdm(sampler.timesteps)  # Progress bar for timesteps
+            timesteps = tqdm(sampler.reversed_timesteps)  # Progress bar for timesteps
             for i, timestep in enumerate(timesteps):
                 # Compute time embedding for the current timestep, (1, 320)
                 # convert number into vector
                 time_embedding = get_time_embedding(timestep).to(self.device)
-
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
                 model_input = latents
                 if do_cfg:  # Duplicate inputs for classifier-free guidance
@@ -231,7 +230,6 @@ class Pipeline:
                 # Predict noise using the diffusion model
                 # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
                 model_output = diffusion(model_input, context, time_embedding)
-
                 if do_cfg:  # Apply classifier-free guidance
                     output_cond, output_uncond = model_output.chunk(2)
                     model_output = (
@@ -254,7 +252,7 @@ class Pipeline:
             to_idle(decoder)  # Free up memory by moving decoder to idle device
 
             # Post-process the generated images
-            images = rescale(images, (-1, 1), (0, 255), clamp=True)
+            images = rescale(images, (-1, 1), (0, 255), clamp_values=True)
             # (Batch_Size, Channel, Height, Width) -> (Batch_Size, Height, Width, Channel)
             images = images.permute(0, 2, 3, 1)  # Rearrange axes for image format
             images = images.to(
