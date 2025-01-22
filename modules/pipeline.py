@@ -260,6 +260,17 @@ class Pipeline:
             ).numpy()  # Convert to numpy for output
             return images[0]  # Return the first image
 
+    def train(
+        prompt,
+        uncond_prompt=None,
+        input_image=None,
+        strength=0.8,
+        do_cfg=True,
+        cfg_scale=7.5,
+        sampler_name="ddpm",
+    ):
+        pass
+
 
 def rescale(input_tensor, source_range, target_range, clamp_values=False):
     """

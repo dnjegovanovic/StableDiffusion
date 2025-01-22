@@ -127,10 +127,10 @@ class UNetResidualBlock(nn.Module):
 
         # (Batch_Size, Output_Channels, Height, Width) -> (Batch_Size, Output_Channels, Height, Width)
         merged_output = F.silu(merged_output)
-        
+
         # (Batch_Size, Out_Channels, Height, Width) -> (Batch_Size, Out_Channels, Height, Width)
         merged_output = self.merged_conv(merged_output)
-        
+
         # (Batch_Size, Out_Channels, Height, Width) + (Batch_Size, Out_Channels, Height, Width) -> (Batch_Size, Out_Channels, Height, Width)
         return merged_output + self.residual_connection(residual)
 
