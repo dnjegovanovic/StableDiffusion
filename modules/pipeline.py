@@ -268,8 +268,79 @@ class Pipeline:
         do_cfg=True,
         cfg_scale=7.5,
         sampler_name="ddpm",
-    ):
-        pass
+        num_epochs=10, 
+        batch_size=64, 
+        lr=1e-4
+    ):  
+        #TODO: This is initial code steps defined, needs to be refactored
+        # Tokenizer and Model Loading
+        tokenizer = None  # Tokenizer isn't strictly needed for MNIST, as we're not using text prompts.
+        model_file = "./data/v1-5-pruned-emaonly.ckpt"  # You can initialize with a pre-trained model, but for training you can start fresh.
+        
+        models = model_loader.preload_models_from_standard_weights(model_file, DEVICE)
+
+        # Pipeline Initialization for Training
+        pipeline = Pipeline(models=models, tokenizer=tokenizer, device=DEVICE, idle_device="cpu")
+
+        # 1. Prepare MNIST Dataset
+        transform = transforms.Compose([
+            transforms.Resize((WIDTH, HEIGHT)),  # Resize to the model's expected input size
+            transforms.Grayscale(num_output_channels=3),  # Convert grayscale to RGB (model expects 3 channels)
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize to [-1, 1]
+        ])
+        
+        train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+        # 2. Training Parameters
+        num_epochs = 10
+        lr = 1e-4  # Learning rate for optimizer
+
+        # Use Adam optimizer for diffusion model
+        diffusion = models["diffusion"]
+        diffusion.to(DEVICE)
+        optimizer = optim.Adam(diffusion.parameters(), lr=lr)
+
+        # 3. Training Loop
+        for epoch in range(num_epochs):
+            epoch_loss = 0
+            for batch_idx, (images, _) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}")):
+                images = images.to(DEVICE)
+                
+                # Initialize random noise as latents
+                latents_shape = (images.size(0), 4, LATENTS_HEIGHT, LATENTS_WIDTH)  # Adjust batch size and latent shape
+                latents = torch.randn(latents_shape, device=DEVICE)
+
+                # Add noise to the latents (simulating the diffusion process)
+                noise = torch.randn_like(latents)
+                noisy_latents = latents + noise
+
+                # Sample random timesteps (this would be part of the diffusion process)
+                timesteps = torch.randint(0, 1000, (images.size(0),), device=DEVICE)  # Random timesteps for each image
+                time_embeddings = pipeline.get_time_embedding(timesteps)
+
+                # Forward pass through the diffusion model
+                model_output = diffusion(noisy_latents, time_embeddings)
+
+                # Compute loss (MSE between predicted noise and actual noise)
+                loss = F.mse_loss(model_output, noise)
+
+                # Backpropagate and optimize
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item()
+
+            # Print the loss for each epoch
+            avg_epoch_loss = epoch_loss / len(train_loader)
+            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_epoch_loss:.4f}")
+
+            # Optionally save the model checkpoint after each epoch
+            torch.save(diffusion.state_dict(), f"./model_checkpoint_epoch_{epoch + 1}.pth")
+
+        print("Training complete.")
 
 
 def rescale(input_tensor, source_range, target_range, clamp_values=False):
