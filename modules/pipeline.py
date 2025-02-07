@@ -1,6 +1,8 @@
 import torch
+import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
+import torch.optim as optim
 
 from models.ddpm import DDPMSampler
 
@@ -201,7 +203,7 @@ class Pipeline:
                 # Add noise to the encoded latents based on the strength
                 # (Batch_Size, 4, Latents_Height, Latents_Width)
                 sampler.set_strength(strength=strength)
-                latents = sampler.add_noise(latents, sampler.timesteps[0])
+                latents = sampler.add_noise(latents, sampler.reversed_timesteps[0])
 
                 to_idle(encoder)  # Free up memory by moving encoder to idle device
             else:  # Generate random latents
@@ -260,71 +262,104 @@ class Pipeline:
             ).numpy()  # Convert to numpy for output
             return images[0]  # Return the first image
 
+    def _do_cfg_and_tokenize_text(self,clip, prompt, uncond_prompt="", do_cfg=True):
+        if do_cfg:  # Classifier-free guidance setup
+            # Tokenize the conditioned prompt and prepare its embeddings, see clip.py
+            cond_tokens = self.tokenizer.batch_encode_plus(
+                [prompt], padding="max_length", max_length=77
+            ).input_ids
+            # (Batch_Size, Seq_Len)
+            cond_tokens = torch.tensor(
+                cond_tokens, dtype=torch.long, device=self.device
+            )
+            # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+            cond_context = clip(
+                cond_tokens
+            )  # Get embeddings for the conditioned prompt
+
+            # Tokenize the unconditioned prompt and prepare its embeddings
+            # Convert into a list of length Seq_Len=77
+            uncond_tokens = self.tokenizer.batch_encode_plus(
+                [uncond_prompt], padding="max_length", max_length=77
+            ).input_ids
+            # (Batch_Size, Seq_Len)
+            uncond_tokens = torch.tensor(
+                uncond_tokens, dtype=torch.long, device=self.device
+            )
+            # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+            uncond_context = clip(
+                uncond_tokens
+            )  # Get embeddings for the unconditioned prompt
+
+            # Concatenate conditioned and unconditioned contexts for guidance
+            # (Batch_Size, Seq_Len, Dim) + (Batch_Size, Seq_Len, Dim) -> (2 * Batch_Size, Seq_Len, Dim)
+            context = torch.cat([cond_context, uncond_context])
+        else:  # No classifier-free guidance
+            tokens = self.tokenizer.batch_encode_plus(
+                [prompt], padding="max_length", max_length=77
+            ).input_ids
+            tokens = torch.tensor(tokens, dtype=torch.long, device=self.device)
+            # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
+            context = clip(tokens)  # Get embeddings for the single prompt
+
+        return context
+    
     def train(
-        prompt,
-        uncond_prompt=None,
-        input_image=None,
-        strength=0.8,
-        do_cfg=True,
-        cfg_scale=7.5,
-        sampler_name="ddpm",
-        num_epochs=10, 
-        batch_size=64, 
-        lr=1e-4
+        self,
+        hyperparameters,
+        train_loader,
+        sampler_name,
+        seed,
     ):  
-        #TODO: This is initial code steps defined, needs to be refactored
-        # Tokenizer and Model Loading
-        tokenizer = None  # Tokenizer isn't strictly needed for MNIST, as we're not using text prompts.
-        model_file = "./data/v1-5-pruned-emaonly.ckpt"  # You can initialize with a pre-trained model, but for training you can start fresh.
-        
-        models = model_loader.preload_models_from_standard_weights(model_file, DEVICE)
-
-        # Pipeline Initialization for Training
-        pipeline = Pipeline(models=models, tokenizer=tokenizer, device=DEVICE, idle_device="cpu")
-
-        # 1. Prepare MNIST Dataset
-        transform = transforms.Compose([
-            transforms.Resize((WIDTH, HEIGHT)),  # Resize to the model's expected input size
-            transforms.Grayscale(num_output_channels=3),  # Convert grayscale to RGB (model expects 3 channels)
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # Normalize to [-1, 1]
-        ])
-        
-        train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-
-        # 2. Training Parameters
-        num_epochs = 10
-        lr = 1e-4  # Learning rate for optimizer
 
         # Use Adam optimizer for diffusion model
-        diffusion = models["diffusion"]
-        diffusion.to(DEVICE)
-        optimizer = optim.Adam(diffusion.parameters(), lr=lr)
+        diffusion = self.models["diffusion"]
+        diffusion.to(self.device)
+        optimizer = optim.Adam(diffusion.parameters(), lr=hyperparameters['learning_rate'])
 
+
+        # Initialize random number generator
+        generator = torch.Generator(device=self.device)
+        if seed is None:
+            generator.seed()  # Use random seed if not provided
+        else:
+            generator.manual_seed(seed)  # Use provided seed for reproducibility
+
+        # Initialize sampler
+        if sampler_name == "ddpm":
+            sampler = DDPMSampler(generator)
+            sampler.set_inference_timesteps(hyperparameters['num_inference_steps'])
+        else:
+            raise ValueError(f"Unknown sampler value {sampler_name}.")
+
+
+        # Load the CLIP model for text processing
+        clip = self.models["clip"]
+        clip.to(self.device)
+        
+        loss_fn = nn.MSELoss()
         # 3. Training Loop
-        for epoch in range(num_epochs):
+        for epoch in range(hyperparameters['epochs']):
             epoch_loss = 0
-            for batch_idx, (images, _) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}")):
-                images = images.to(DEVICE)
-                
-                # Initialize random noise as latents
-                latents_shape = (images.size(0), 4, LATENTS_HEIGHT, LATENTS_WIDTH)  # Adjust batch size and latent shape
-                latents = torch.randn(latents_shape, device=DEVICE)
-
-                # Add noise to the latents (simulating the diffusion process)
-                noise = torch.randn_like(latents)
-                noisy_latents = latents + noise
+            for batch_idx, (images, text) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{hyperparameters['epochs']}")):
+                images = images.to(self.device)
+                context = self._do_cfg_and_tokenize_text(clip, text)
+                # # Initialize random noise as latents
+                # latents_shape = (images.size(0), 4, LATENTS_HEIGHT, LATENTS_WIDTH)  # Adjust batch size and latent shape
+                # latents = torch.randn(latents_shape, device=self.device)
 
                 # Sample random timesteps (this would be part of the diffusion process)
-                timesteps = torch.randint(0, 1000, (images.size(0),), device=DEVICE)  # Random timesteps for each image
-                time_embeddings = pipeline.get_time_embedding(timesteps)
+                timesteps = torch.randint(0, hyperparameters["diffusion_steps"], (images.size(0),), device=self.device)  # Random timesteps for each image
+                time_embeddings = get_time_embedding(timesteps).to(self.device)
+                
+                # Add noise to the latents (simulating the diffusion process)
+                noisy_latents = sampler.add_noise(images,timesteps)
 
                 # Forward pass through the diffusion model
-                model_output = diffusion(noisy_latents, time_embeddings)
+                model_output = diffusion(noisy_latents, context, time_embeddings)
 
                 # Compute loss (MSE between predicted noise and actual noise)
-                loss = F.mse_loss(model_output, noise)
+                loss = loss_fn(model_output, noisy_latents)
 
                 # Backpropagate and optimize
                 optimizer.zero_grad()
@@ -335,7 +370,7 @@ class Pipeline:
 
             # Print the loss for each epoch
             avg_epoch_loss = epoch_loss / len(train_loader)
-            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_epoch_loss:.4f}")
+            print(f"Epoch {epoch + 1}/{hyperparameters['epochs']}, Loss: {avg_epoch_loss:.4f}")
 
             # Optionally save the model checkpoint after each epoch
             torch.save(diffusion.state_dict(), f"./model_checkpoint_epoch_{epoch + 1}.pth")
