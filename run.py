@@ -64,4 +64,5 @@ if __name__ == "__main__":
     )
 
     # Combine the input image and the output image into a single image.
-    Image.fromarray(output_image)
+    img = Image.fromarray(output_image)
+    img.save("./output/output_img.jpg", quality=95)

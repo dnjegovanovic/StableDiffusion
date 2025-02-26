@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from torch.utils.data import DataLoader
+from torchvision.datasets import CocoCaptions
 from torchvision import transforms
 
 from utils import model_loader
@@ -26,7 +27,7 @@ elif (torch.has_mps or torch.backends.mps.is_available()) and ALLOW_MPS:
 print(f"Using device: {DEVICE}")
 
 if __name__ == "__main__":
-    
+    seed = 42
     # Hyperparameters
     hyperparameters = {
         "batch_size": 8,
@@ -53,11 +54,19 @@ if __name__ == "__main__":
         transforms.Normalize([0.5], [0.5]),
     ])
 
-
-
-    dataset = CustomDataset("./data/train_images", transform=data_transforms, tokenizer=tokenizer)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataset = CocoCaptions(
+        root=r"/home/dusan/Desktop/ML_PROJECTS/datasets/coco_captions/train2014/train2014",
+        annFile=r"/home/dusan/Desktop/ML_PROJECTS/datasets/coco_captions/annotations_trainval2017/annotations/captions_train2014.json",
+        transform=data_transforms,
+    )
+    
+    dataloader = DataLoader(dataset, batch_size=hyperparameters['batch_size'], shuffle=True)
     
     pipeline = Pipeline(
         models=models, tokenizer=tokenizer, device=DEVICE, idle_device="cpu"
     )
+    
+    pipeline.train(hyperparameters=hyperparameters,
+                   train_loader=dataloader,
+                   sampler_name="ddpm",
+                   seed=seed)
