@@ -1,4 +1,4 @@
-from models.timembedding import TimeEmbedding
+from stablediffusion.models.timembedding import TimeEmbedding
 import torch
 
 

@@ -1,5 +1,5 @@
-from models.encoder import *
-from models.decoder import *
+from stablediffusion.models.encoder import *
+from stablediffusion.models.decoder import *
 
 WIDTH = 512
 HEIGHT = 512

@@ -1,9 +1,9 @@
-from models.clip import CLIP
-from models.encoder import VAEncoder
-from models.decoder import VAEDecoder
-from models.diffusion import Diffusion
+from stablediffusion.models.clip import CLIP
+from stablediffusion.models.encoder import VAEncoder
+from stablediffusion.models.decoder import VAEDecoder
+from stablediffusion.models.diffusion import Diffusion
 
-from utils import model_converter
+from stablediffusion.utils import model_converter
 
 
 def preload_models_from_standard_weights(ckpt_path, device):

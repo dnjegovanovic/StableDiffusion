@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from models.decoder import VAEAttentionBlock, VAEResidualBlock
+from stablediffusion.models.decoder import VAEAttentionBlock, VAEResidualBlock
 
 
 class VAEncoder(nn.Sequential):

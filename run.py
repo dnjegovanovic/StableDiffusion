@@ -1,5 +1,5 @@
-from utils import model_loader
-from modules.pipeline import Pipeline
+from stablediffusion.utils import model_loader
+from stablediffusion.modules.pipeline import Pipeline
 from PIL import Image
 from pathlib import Path
 from transformers import CLIPTokenizer
@@ -12,8 +12,6 @@ ALLOW_MPS = False
 
 if torch.cuda.is_available() and ALLOW_CUDA:
     DEVICE = "cuda"
-elif (torch.has_mps or torch.backends.mps.is_available()) and ALLOW_MPS:
-    DEVICE = "mps"
 print(f"Using device: {DEVICE}")
 
 if __name__ == "__main__":

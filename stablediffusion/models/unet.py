@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import math
-from models.attention import MultiHeadSelfAttention, MultiHeadCrossAttention
+from stablediffusion.models.attention import (
+    MultiHeadSelfAttention,
+    MultiHeadCrossAttention,
+)
 
 
 class ConditionalSequential(nn.Sequential):

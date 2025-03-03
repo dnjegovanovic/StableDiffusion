@@ -1,4 +1,4 @@
-from models.unet import *
+from stablediffusion.models.unet import *
 from conftest import *
 
 import pytest

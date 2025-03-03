@@ -3,8 +3,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 import math
 
-from models.timembedding import TimeEmbedding
-from models.unet import UNet, UNetOutputLayer
+from stablediffusion.models.timembedding import TimeEmbedding
+from stablediffusion.models.unet import UNet, UNetOutputLayer
 
 
 class Diffusion(nn.Module):

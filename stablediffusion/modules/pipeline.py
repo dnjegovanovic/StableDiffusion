@@ -3,13 +3,13 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 import torch.optim as optim
-import cv2
 
-from models.ddpm import DDPMSampler
+from stablediffusion.models.ddpm import DDPMSampler
+from stablediffusion.utils.timembedding_fun import *
 
 # Defined by production trained models
-WIDTH = 512
-HEIGHT = 512
+WIDTH = 256
+HEIGHT = 256
 LATENTS_WIDTH = WIDTH // 8
 LATENTS_HEIGHT = HEIGHT // 8
 
@@ -263,20 +263,19 @@ class Pipeline:
             ).numpy()  # Convert to numpy for output
             return images[0]  # Return the first image
 
-    def _do_cfg_and_tokenize_text(self,clip, prompt, uncond_prompt="", do_cfg=True):
+    def _do_cfg_and_tokenize_text(
+        self, clip, prompt, uncond_prompt="", do_cfg=True, batch_size=1
+    ):
         if do_cfg:  # Classifier-free guidance setup
             # Tokenize the conditioned prompt and prepare its embeddings, see clip.py
             # prompt[0] - pass through batch_encode_plus
-            # TODO: Proveriti sta se tacno desava u dataloaderu i sta on vraca.
-            t_t = []
-            for p in prompt:
-                cond_tokens = self.tokenizer.batch_encode_plus(
-                    p, padding="max_length", max_length=77
-                ).input_ids
-                t_t.append(cond_tokens)
+
+            cond_tokens = self.tokenizer.batch_encode_plus(
+                prompt, padding="max_length", max_length=77
+            ).input_ids
             # (Batch_Size, Seq_Len)
             cond_tokens = torch.tensor(
-                t_t, dtype=torch.long, device=self.device
+                cond_tokens, dtype=torch.long, device=self.device
             )
             # (Batch_Size, Seq_Len) -> (Batch_Size, Seq_Len, Dim)
             cond_context = clip(
@@ -285,8 +284,12 @@ class Pipeline:
 
             # Tokenize the unconditioned prompt and prepare its embeddings
             # Convert into a list of length Seq_Len=77
+            u_p = [uncond_prompt] * batch_size
             uncond_tokens = self.tokenizer.batch_encode_plus(
-                [uncond_prompt], padding="max_length", max_length=77
+                u_p,
+                padding="max_length",
+                max_length=77,
+                truncation=True,
             ).input_ids
             # (Batch_Size, Seq_Len)
             uncond_tokens = torch.tensor(
@@ -309,20 +312,22 @@ class Pipeline:
             context = clip(tokens)  # Get embeddings for the single prompt
 
         return context
-    
+
     def train(
         self,
         hyperparameters,
         train_loader,
         sampler_name,
         seed,
-    ):  
+    ):
 
-        # Use Adam optimizer for diffusion model
+        # Set diffusion model
         diffusion = self.models["diffusion"]
         diffusion.to(self.device)
-        optimizer = optim.Adam(diffusion.parameters(), lr=hyperparameters['learning_rate'])
-
+        # Use Adam optimizer for diffusion model
+        optimizer = optim.Adam(
+            diffusion.parameters(), lr=hyperparameters["learning_rate"]
+        )
 
         # Initialize random number generator
         generator = torch.Generator(device=self.device)
@@ -331,56 +336,66 @@ class Pipeline:
         else:
             generator.manual_seed(seed)  # Use provided seed for reproducibility
 
-        # Initialize sampler
+        # Initialize ddpm sampler
         if sampler_name == "ddpm":
             sampler = DDPMSampler(generator)
-            sampler.set_inference_timesteps(hyperparameters['num_inference_steps'])
+            sampler.set_inference_timesteps(hyperparameters["num_inference_steps"])
         else:
             raise ValueError(f"Unknown sampler value {sampler_name}.")
-
 
         # Load the CLIP model for text processing
         clip = self.models["clip"]
         clip.to(self.device)
-        
+
         # Load the VAE model for text processing
         encoder = self.models["encoder"]
         encoder.to(self.device)
-        
+
         # Decode the final latents into images
         decoder = self.models["decoder"]
         decoder.to(self.device)
-        
+
         loss_fn = nn.MSELoss()
         # 3. Training Loop
-        for epoch in range(hyperparameters['epochs']):
+        for epoch in range(hyperparameters["epochs"]):
             epoch_loss = 0
-            for batch_idx, (images, text) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}/{hyperparameters['epochs']}")):
+            for batch_idx, (images, text) in enumerate(
+                tqdm(
+                    train_loader, desc=f"Epoch {epoch + 1}/{hyperparameters['epochs']}"
+                )
+            ):
                 img_tmp = images[0].detach().cpu().numpy()
-                reshaped_imge = np.transpose(img_tmp, (1,2,0))
-                print(text[0])
-                # Display the resized image
-                # Convert RGB to BGR
-                bgr_image = cv2.cvtColor(reshaped_imge, cv2.COLOR_RGB2BGR)
-                cv2.imwrite("./test.jpg", bgr_image)
-                
+
                 images = images.to(self.device)
-                text_con = [list(a) for a in text]
-                context = self._do_cfg_and_tokenize_text(clip, text_con)
+                text_con = [list(t[0] for t in text)]  # [list(a) for a in text]
+                context = self._do_cfg_and_tokenize_text(
+                    clip, text, batch_size=hyperparameters["batch_size"]
+                )
                 # # Initialize random noise as latents
-                latents_shape = (images.size(0), 4, LATENTS_HEIGHT, LATENTS_WIDTH)  # Adjust batch size and latent shape
+                latents_shape = (
+                    images.size(0),
+                    4,
+                    LATENTS_HEIGHT,
+                    LATENTS_WIDTH,
+                )  # Adjust batch size and latent shape
                 encoder_noise = torch.randn(
                     latents_shape, generator=generator, device=self.device
                 )
 
                 # Sample random timesteps (this would be part of the diffusion process)
-                timesteps = torch.randint(0, hyperparameters["diffusion_steps"], (images.size(0),), device=self.device)  # Random timesteps for each image
-                time_embeddings = get_time_embedding(timesteps).to(self.device)
-                
+                timesteps = torch.randint(
+                    0,
+                    hyperparameters["diffusion_steps"],
+                    (images.size(0),),
+                    device=self.device,
+                )  # Random timesteps for each image
+                # time_embeddings = get_time_embedding(timesteps).to(self.device)
+                time_embeddings = get_batch_time_embedding(timesteps, self.device)
+
                 # Add noise to the latents (simulating the diffusion process)
                 with torch.no_grad():
                     latent = encoder(images, encoder_noise)
-                noisy_latents = sampler.add_noise(latent,timesteps)
+                noisy_latents = sampler.add_noise(latent, timesteps)
 
                 # Forward pass through the diffusion model
                 model_output = diffusion(noisy_latents, context, time_embeddings)
@@ -397,10 +412,14 @@ class Pipeline:
 
             # Print the loss for each epoch
             avg_epoch_loss = epoch_loss / len(train_loader)
-            print(f"Epoch {epoch + 1}/{hyperparameters['epochs']}, Loss: {avg_epoch_loss:.4f}")
+            print(
+                f"Epoch {epoch + 1}/{hyperparameters['epochs']}, Loss: {avg_epoch_loss:.4f}"
+            )
 
             # Optionally save the model checkpoint after each epoch
-            torch.save(diffusion.state_dict(), f"./model_checkpoint_epoch_{epoch + 1}.pth")
+            torch.save(
+                diffusion.state_dict(), f"./model_checkpoint_epoch_{epoch + 1}.pth"
+            )
 
         print("Training complete.")
 
@@ -444,40 +463,3 @@ def rescale(input_tensor, source_range, target_range, clamp_values=False):
         input_tensor = input_tensor.clamp(target_min, target_max)
 
     return input_tensor
-
-
-def get_time_embedding(timestep):
-    """
-    Computes a time embedding for a given timestep using sinusoidal position encoding.
-
-    Args:
-        timestep (int or float): The timestep value to embed.
-
-    Returns:
-        torch.Tensor: A tensor representing the time embedding.
-                      Shape: (1, 320), where 320 is twice the embedding size (160 * 2).
-
-    Example:
-        >>> embedding = get_time_embedding(10)
-        >>> print(embedding.shape)
-        torch.Size([1, 320])
-    """
-    embedding_dim = 160  # The dimensionality of the time embedding
-    # Compute frequency terms based on the embedding dimensionality
-    frequencies = torch.pow(
-        10000,
-        -torch.arange(start=0, end=embedding_dim, dtype=torch.float32) / embedding_dim,
-    )
-
-    # Compute the time-dependent sinusoidal embedding
-    timestep_tensor = torch.tensor([timestep], dtype=torch.float32).unsqueeze(
-        1
-    )  # Shape: (1, 1)
-    positional_values = timestep_tensor * frequencies.unsqueeze(0)  # Shape: (1, 160)
-
-    # Concatenate sine and cosine components to create the embedding
-    time_embedding = torch.cat(
-        [torch.cos(positional_values), torch.sin(positional_values)], dim=-1
-    )  # Shape: (1, 320)
-
-    return time_embedding

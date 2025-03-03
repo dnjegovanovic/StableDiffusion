@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from models.attention import MultiHeadSelfAttention
+from stablediffusion.models.attention import MultiHeadSelfAttention
 
 
 class CLIPEmbedding(nn.Module):
