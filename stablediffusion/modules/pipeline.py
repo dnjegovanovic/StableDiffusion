@@ -3,9 +3,13 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
 
 from stablediffusion.models.ddpm import DDPMSampler
 from stablediffusion.utils.timembedding_fun import *
+
+import matplotlib.pyplot as plt
+import taichi as ti
 
 # Defined by production trained models
 WIDTH = 256
@@ -313,13 +317,7 @@ class Pipeline:
 
         return context
 
-    def train(
-        self,
-        hyperparameters,
-        train_loader,
-        sampler_name,
-        seed,
-    ):
+    def train(self, hyperparameters, train_loader, sampler_name, seed, display=False):
 
         # Set diffusion model
         diffusion = self.models["diffusion"]
@@ -356,6 +354,22 @@ class Pipeline:
         decoder.to(self.device)
 
         loss_fn = nn.MSELoss()
+
+        tb_writer = SummaryWriter(log_dir="./outputs/tb_logs" / f"train_test_001")
+
+        i = 0
+        loss_curve = []
+        if display:
+            plt.ion()
+            figure = plt.figure()
+            plt.title("Loss")
+            (plot_curve,) = plt.semilogy(np.array(loss_curve))
+
+            gui = ti.GUI(
+                "Gaussian Splatting - 3D test",
+                res=(hyperparameters["res"][0], hyperparameters["res"][1]),
+            )
+
         # 3. Training Loop
         for epoch in range(hyperparameters["epochs"]):
             epoch_loss = 0
@@ -409,12 +423,30 @@ class Pipeline:
                 optimizer.step()
 
                 epoch_loss += loss.item()
+                # output status
+                tb_writer.add_scalar("loss", loss, i)
+
+                # TODO: Reconstruct image
+                # if batch_idx % 10 == 0 and display:
+                #     gui.set_image(out_img)
+                #     gui.show()
 
             # Print the loss for each epoch
             avg_epoch_loss = epoch_loss / len(train_loader)
             print(
                 f"Epoch {epoch + 1}/{hyperparameters['epochs']}, Loss: {avg_epoch_loss:.4f}"
             )
+            if display:
+                loss_curve.append(loss)
+                plot_curve.set_xdata(np.arange(len(loss_curve)))
+                plot_curve.set_ydata(np.array(loss_curve))
+
+                ax = plt.gca()
+                ax.relim()
+                ax.autoscale_view()
+
+                figure.canvas.draw()
+                figure.canvas.flush_events()
 
             # Optionally save the model checkpoint after each epoch
             torch.save(
