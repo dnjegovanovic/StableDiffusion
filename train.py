@@ -21,7 +21,8 @@ DEVICE = "cpu"
 
 ALLOW_CUDA = True
 ALLOW_MPS = False
-
+WIDTH = 256
+HEIGHT = 256
 if torch.cuda.is_available() and ALLOW_CUDA:
     DEVICE = "cuda"
 
@@ -37,6 +38,7 @@ if __name__ == "__main__":
         "num_inference_steps": 50,
         "diffusion_steps": 1000,
         "checkpoint_dir": "./checkpoints",
+        "res": [WIDTH, HEIGHT],
     }
 
     os.makedirs(hyperparameters["checkpoint_dir"], exist_ok=True)

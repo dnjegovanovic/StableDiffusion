@@ -317,7 +317,15 @@ class Pipeline:
 
         return context
 
-    def train(self, hyperparameters, train_loader, sampler_name, seed, display=False):
+    def train(
+        self,
+        hyperparameters,
+        train_loader,
+        sampler_name,
+        seed,
+        display=True,
+        do_cfg=True,
+    ):
 
         # Set diffusion model
         diffusion = self.models["diffusion"]
@@ -355,7 +363,7 @@ class Pipeline:
 
         loss_fn = nn.MSELoss()
 
-        tb_writer = SummaryWriter(log_dir="./outputs/tb_logs" / f"train_test_001")
+        tb_writer = SummaryWriter(log_dir="outputs/tb_logs/train_test_001")
 
         i = 0
         loss_curve = []
@@ -366,7 +374,7 @@ class Pipeline:
             (plot_curve,) = plt.semilogy(np.array(loss_curve))
 
             gui = ti.GUI(
-                "Gaussian Splatting - 3D test",
+                "Stable Diffusion - train test",
                 res=(hyperparameters["res"][0], hyperparameters["res"][1]),
             )
 
@@ -381,7 +389,6 @@ class Pipeline:
                 img_tmp = images[0].detach().cpu().numpy()
 
                 images = images.to(self.device)
-                text_con = [list(t[0] for t in text)]  # [list(a) for a in text]
                 context = self._do_cfg_and_tokenize_text(
                     clip, text, batch_size=hyperparameters["batch_size"]
                 )
@@ -424,29 +431,50 @@ class Pipeline:
 
                 epoch_loss += loss.item()
                 # output status
-                tb_writer.add_scalar("loss", loss, i)
+                if batch_idx % 10 == 0:
+                    tb_writer.add_scalar("loss", loss, batch_idx)
 
-                # TODO: Reconstruct image
-                # if batch_idx % 10 == 0 and display:
-                #     gui.set_image(out_img)
-                #     gui.show()
+                if display and batch_idx % 10 == 0:
+                    loss_curve.append(loss.detach().cpu().numpy())
+                    plot_curve.set_xdata(np.arange(len(loss_curve)))
+                    plot_curve.set_ydata(np.array(loss_curve))
+
+                    ax = plt.gca()
+                    ax.relim()
+                    ax.autoscale_view()
+
+                    figure.canvas.draw()
+                    figure.canvas.flush_events()
+
+                if batch_idx % 10 == 0 and display:
+                    # Update latents by removing predicted noise
+                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 4, Latents_Height, Latents_Width)
+                    latents_rmn = sampler.step(
+                        timesteps[0], noisy_latents[0], model_output[0]
+                    )
+                    latents_rmn = latents_rmn.unsqueeze(0)
+                    # (Batch_Size, 4, Latents_Height, Latents_Width) -> (Batch_Size, 3, Height, Width)
+                    decoder.to(self.device)
+                    images = decoder(latents_rmn)
+                    decoder.to(
+                        self.idle_device
+                    )  # Free up memory by moving decoder to idle device
+                    # Post-process the generated images
+                    images = rescale(images, (-1, 1), (0, 255), clamp_values=True)
+                    # (Batch_Size, Channel, Height, Width) -> (Batch_Size, Height, Width, Channel)
+                    images = images.permute(
+                        0, 2, 3, 1
+                    )  # Rearrange axes for image format
+                    images = images.to("cpu", torch.uint8).numpy()
+                    print(f"Context: {text[0]}")
+                    gui.set_image(images[0])
+                    gui.show()
 
             # Print the loss for each epoch
             avg_epoch_loss = epoch_loss / len(train_loader)
             print(
                 f"Epoch {epoch + 1}/{hyperparameters['epochs']}, Loss: {avg_epoch_loss:.4f}"
             )
-            if display:
-                loss_curve.append(loss)
-                plot_curve.set_xdata(np.arange(len(loss_curve)))
-                plot_curve.set_ydata(np.array(loss_curve))
-
-                ax = plt.gca()
-                ax.relim()
-                ax.autoscale_view()
-
-                figure.canvas.draw()
-                figure.canvas.flush_events()
 
             # Optionally save the model checkpoint after each epoch
             torch.save(
